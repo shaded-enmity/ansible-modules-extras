@@ -116,22 +116,6 @@ EXAMPLES = '''
 class AnsibleDnfException(Exception):
         pass
 
-'''
-class Severity(object):
-        (NONE, INFO, ERROR) = range(3)
-
-def _severity_to_syslog(severity):
-        return dict(
-                Severity.NONE:  syslog.LOG_DEBUG,
-                Severity.INFO:  syslog.LOG_INFO,
-                Severity.ERROR: syslog.LOG_ERROR
-        ).get(severity)
-
-def log(msg, severity=Severity.INFO):
-        syslog.openlog('ansible-dnf', 0, syslog.LOG_USER)
-        syslog.syslog(_severity_to_syslog(severity), msg)
-'''
-
 def init_dnf(repos = ([], []), conf = '', gpg = True):
         obj = dnf.Base()
         if conf:
@@ -144,6 +128,8 @@ def init_dnf(repos = ([], []), conf = '', gpg = True):
         if not gpg:
                 obj.conf.gpgcheck = False
 
+        obj.conf.assumeyes = True
+
         if repos[1]:
                 for r in repos[1]:
                         obj.repos.get_matching(r).disable()
@@ -153,7 +139,6 @@ def init_dnf(repos = ([], []), conf = '', gpg = True):
                         obj.repos.get_matching(r).enable()
 
         obj.fill_sack()
-
 
         return obj
 
