@@ -157,7 +157,7 @@ def init_dnf(repos = ([], []), conf = '', gpg = True):
 
         return obj
 
-def ansible_result(module, rc, msg, changed, results)
+def ansible_result(module, rc, msg, changed, results):
     o = {
         'rc' :      rc,
         'msg':      msg,
