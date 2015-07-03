@@ -1,3 +1,4 @@
+#!/usr/bin/python -tt
 # vim: set fileencoding=utf-8
 # Written by Pavel Odvody <podvody@redhat.com>
 #
@@ -138,6 +139,7 @@ def init_dnf(repos = ([], []), conf = '', gpg = True):
                 for r in repos[0]:
                         obj.repos.get_matching(r).enable()
 
+        obj.read_all_repos()
         obj.fill_sack()
 
         return obj
@@ -159,40 +161,56 @@ def get_names(name):
 def install(dnfo, name):
         " :type dnfo: dnf.Base "
         if name.startswith('@'):
-                return dnfo.group_install(name, 'default')
-        for n in get_names(name):
+                dnfo.group_install(name, 'default')
+                return [name]
+
+        names = get_names(name)
+        for n in names:
                 dnfo.install(n)
 
-        return True
+        return names
 
 def remove(dnfo, name):
         " :type dnfo: dnf.Base "
         if name.startswith('@'):
-                return dnfo.group_remove(name)
-        for n in get_names(name):
-                dnfo.remove(n)
-        return True
+                dnfo.group_remove(name)
+                return [name]
+
+        names = get_names(name)
+        for n in names:
+                try:
+                        dnfo.remove(n)
+                except dnf.exceptions.PackagesNotInstalledError:
+                        pass
+
+        return names
 
 def upgrade(dnfo, name):
         " :type dnfo: dnf.Base "
         if name == '*':
-                return dnfo.upgrade_all()
+                dnfo.upgrade_all()
+                return [name]
+
         if name.startswith('@'):
-                return dnfo.group_upgrade(name)
+                dnfo.group_upgrade(name)
+                return [name]
 
         q = dnfo.sack.query()
         a = q.available()
         i = q.installed()
-        for n in get_names(name):
+
+        names = get_names(name)
+        for n in names:
                 i = i.filter(name=n)
                 a = a.filter(name=n)
                 if not i and a:
                         dnfo.install(n)
                 else:
                         dnfo.upgrade(n)
-        return True
+        return names
 
 def handle_state(dnfo, state, name):
+        " :type dnfo: dnf.Base "
         if state in ['present', 'installed']:
                 return install(dnfo, name)
         elif state in ['absent', 'removed']:
@@ -203,11 +221,25 @@ def handle_state(dnfo, state, name):
                 raise AnsibleDnfException()
 
 def handle_list(dnfo, what):
-        pass
+        " :type dnfo: dnf.Base "
+        if what == 'repos':
+                return [k for (k, _) in dnfo.repos.iteritems()]
+        else:
+                q = dnfo.sack.query()
+                installed = q.installed()
+                updates = q.updates()
+                available = q.available()
+                #TODO: process these ^^
+                return []
+        
 
 def parse_repolist(repos):
+        if not repos:
+                return []
+
         if repos == '*' or ',' not in repos:
                 return [repos]
+
         return repos.split(',')
 
 def main():
@@ -251,15 +283,19 @@ def main():
     )
 
     if params['list']:
-            pass
+        ansible_result(module, 0, "", True, handle_list(dnfo, params['list']))
     else:
         pkg = params['name']
         state = params['state']
 
-        handle_state(dnfo, state, pkg)
+        names = handle_state(dnfo, state, pkg)
 
-        module.fail_json(msg="ERROR: Should never get here", rc=1)
+        dnfo.resolve()
+        dnfo.download_packages(dnfo.transaction.install_set)
+        dnfo.do_transaction()
+
+        ansible_result(module, 0, "", True, ', '.join(names))
 
 from ansible.module_utils.basic import *
-main()
-
+if __name__ == '__main__':
+        main()
