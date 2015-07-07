@@ -330,6 +330,10 @@ def main():
         names = handle_state(dnfo, state, pkg)
 
         dnfo.resolve()
+
+        if state == 'latest' and pkg == '*':
+                names['Upgraded'] = sorted([format_pkg(p) for p in dnfo.transaction.install_set])
+
         dnfo.download_packages(dnfo.transaction.install_set)
         dnfo.do_transaction()
 
