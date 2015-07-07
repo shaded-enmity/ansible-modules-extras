@@ -155,7 +155,7 @@ def get_names(name):
         return name.split(',')
 
 def query(c, name):
-        i = c.filter(name=name)
+        i = c.filter(provides=name)
         if not i:
                 return 'No package {0} installed'.format(name)
         return format_pkg(i[0])
@@ -214,8 +214,8 @@ def upgrade(dnfo, name):
         installed, upgraded = [], []
         names = get_names(name)
         for n in names:
-                i = i.filter(name=n)
-                a = a.filter(name=n)
+                i = i.filter(provides=n)
+                a = a.filter(provides=n)
                 if not i and a:
                         installed.append(format_pkg(a[0]))
                         dnfo.install(n)
