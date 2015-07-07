@@ -322,7 +322,7 @@ def main():
     )
 
     if params['list']:
-        ansible_result(module, 0, "", True, handle_list(dnfo, params['list']))
+        ansible_result(module, 0, True, handle_list(dnfo, params['list']))
     else:
         pkg = params['name']
         state = params['state']
