@@ -154,19 +154,28 @@ def get_names(name):
                 return [name]
         return name.split(',')
 
+def query(c, name):
+        i = c.filter(name=name)
+        if not i:
+                return 'No package {0} installed'.format(name)
+        return format_pkg(i[0])
+
 def install(dnfo, name):
         " :type dnfo: dnf.Base "
         if name.startswith('@'):
                 dnfo.group_install(name, 'default')
                 return { 'Installed': name}
 
+        q = dnfo.sack.query()
+        i = q.available()
+
+        installed = []
         names = get_names(name)
         for n in names:
                 dnfo.install(n)
+                installed.append(query(i, n))
 
-        return { 
-                'Installed': names 
-        }
+        return { 'Installed': installed }
 
 def remove(dnfo, name):
         " :type dnfo: dnf.Base "
@@ -174,12 +183,15 @@ def remove(dnfo, name):
                 dnfo.group_remove(name)
                 return { 'Removed': name }
 
+        q = dnfo.sack.query()
+        i = q.installed()
+
         removed = []
         names = get_names(name)
         for n in names:
                 try:
                         dnfo.remove(n)
-                        removed.append(n)
+                        removed.append(query(i, n))
                 except dnf.exceptions.PackagesNotInstalledError:
                         pass
 
