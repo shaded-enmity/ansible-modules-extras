@@ -114,16 +114,13 @@ EXAMPLES = '''
 
 '''
 
-class AnsibleDnfException(Exception):
-        pass
-
-def init_dnf(repos = ([], []), conf = '', gpg = True):
+def init_dnf(module, repos = ([], []), conf = '', gpg = True):
         obj = dnf.Base()
         if conf:
                 if not os.path.exists(conf):
-                        raise AnsibleDnfException(
-                                'Invalid configuration path: {0}'.format(conf)
-                        )
+                        err = { msg: 'Invalid configuration path',
+                                path: conf }
+                        module.fail_json(**err)
                 obj.conf.read(conf)
 
         if not gpg:
@@ -144,10 +141,9 @@ def init_dnf(repos = ([], []), conf = '', gpg = True):
 
         return obj
 
-def ansible_result(module, rc, msg, changed, results):
+def ansible_result(module, rc, changed, results):
     o = {
         'rc' :      rc,
-        'msg':      msg,
         'changed':  changed,
         'results':  results
     }
@@ -162,52 +158,65 @@ def install(dnfo, name):
         " :type dnfo: dnf.Base "
         if name.startswith('@'):
                 dnfo.group_install(name, 'default')
-                return [name]
+                return { 'Installed': name}
 
         names = get_names(name)
         for n in names:
                 dnfo.install(n)
 
-        return names
+        return { 
+                'Installed': names 
+        }
 
 def remove(dnfo, name):
         " :type dnfo: dnf.Base "
         if name.startswith('@'):
                 dnfo.group_remove(name)
-                return [name]
+                return { 'Removed': name }
 
+        removed = []
         names = get_names(name)
         for n in names:
                 try:
                         dnfo.remove(n)
+                        removed.append(n)
                 except dnf.exceptions.PackagesNotInstalledError:
                         pass
 
-        return names
+        return { 'Removed': removed }
 
 def upgrade(dnfo, name):
         " :type dnfo: dnf.Base "
         if name == '*':
                 dnfo.upgrade_all()
-                return [name]
+                return { 'Upgraded': 'all' }
 
         if name.startswith('@'):
                 dnfo.group_upgrade(name)
-                return [name]
+                return { 'Upgraded': name }
 
         q = dnfo.sack.query()
         a = q.available()
         i = q.installed()
 
+        installed, upgraded = [], []
         names = get_names(name)
         for n in names:
                 i = i.filter(name=n)
                 a = a.filter(name=n)
                 if not i and a:
+                        installed.append(format_pkg(a[0]))
                         dnfo.install(n)
-                else:
+                elif i and a: 
+                        upgraded.append(format_pkg(a[0]))
                         dnfo.upgrade(n)
-        return names
+                elif not i and not a:
+                        raise dnf.exceptions.Error('Package {0} not found'.format(n))
+
+        return {
+                'Installed': installed,
+                'Upgraded': upgraded
+        }
 
 def handle_state(dnfo, state, name):
         " :type dnfo: dnf.Base "
@@ -217,8 +226,23 @@ def handle_state(dnfo, state, name):
                 return remove(dnfo, name)
         elif state == 'latest':
                 return upgrade(dnfo, name)
-        else:
-                raise AnsibleDnfException()
+
+        return None
+
+def format_pkg(p):
+        return {
+                'name': p.name,
+                'arch': p.arch,
+                'release': p.release,
+                'version': p.version,
+                'epoch': p.epoch,
+                'repo': p.reponame,
+                'nevra': "{0}:{1}-{2}-{3}.{4}".format(p.name, p.epoch, p.version, p.release, p.arch)
+
+        }
+
+def get_pkg_list(query, collection):
+        return sorted([format_pkg(p) for p in getattr(query, collection)()])
 
 def handle_list(dnfo, what):
         " :type dnfo: dnf.Base "
@@ -226,12 +250,14 @@ def handle_list(dnfo, what):
                 return [k for (k, _) in dnfo.repos.iteritems()]
         else:
                 q = dnfo.sack.query()
-                installed = q.installed()
-                updates = q.updates()
-                available = q.available()
-                #TODO: process these ^^
+                if what == 'installed':
+                        return get_pkg_list(q, 'installed')
+                elif what == 'avaiable':
+                        return get_pkg_list(q, 'avaiable')
+                elif what == 'updates':
+                        return get_pkg_list(q, 'upgrades')
+
                 return []
-        
 
 def parse_repolist(repos):
         if not repos:
@@ -277,9 +303,10 @@ def main():
     disabled = parse_repolist(disablerepo)
 
     dnfo = init_dnf(
-        repos = (enabled, disabled), 
-        conf  = params['conf_file'], 
-        gpg   = not params['disable_gpg_check']
+        module = module,
+        repos  = (enabled, disabled), 
+        conf   = params['conf_file'], 
+        gpg    = not params['disable_gpg_check']
     )
 
     if params['list']:
@@ -294,7 +321,7 @@ def main():
         dnfo.download_packages(dnfo.transaction.install_set)
         dnfo.do_transaction()
 
-        ansible_result(module, 0, "", True, ', '.join(names))
+        ansible_result(module, 0, True, names)
 
 from ansible.module_utils.basic import *
 if __name__ == '__main__':
