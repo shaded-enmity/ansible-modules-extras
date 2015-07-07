@@ -138,6 +138,7 @@ def init_dnf(module, repos = ([], []), conf = '', gpg = True):
 
         obj.read_all_repos()
         obj.fill_sack()
+        obj.read_comps()
 
         return obj
 
@@ -163,7 +164,8 @@ def query(c, name):
 def install(dnfo, name):
         " :type dnfo: dnf.Base "
         if name.startswith('@'):
-                dnfo.group_install(name, 'default')
+                grp = dnfo.comps.group_by_pattern(name[1:])
+                dnfo.group_install(grp, 'default')
                 return { 'Installed': name}
 
         q = dnfo.sack.query()
@@ -180,7 +182,8 @@ def install(dnfo, name):
 def remove(dnfo, name):
         " :type dnfo: dnf.Base "
         if name.startswith('@'):
-                dnfo.group_remove(name)
+                grp = dnfo.comps.group_by_pattern(name[1:])
+                dnfo.group_remove(grp)
                 return { 'Removed': name }
 
         q = dnfo.sack.query()
@@ -204,7 +207,8 @@ def upgrade(dnfo, name):
                 return { 'Upgraded': 'all' }
 
         if name.startswith('@'):
-                dnfo.group_upgrade(name)
+                grp = dnfo.comps.group_by_pattern(name[1:])
+                dnfo.group_upgrade(grp)
                 return { 'Upgraded': name }
 
         q = dnfo.sack.query()
@@ -253,8 +257,11 @@ def format_pkg(p):
 
         }
 
+def pkg_list(lst):
+        return sorted([format_pkg(p) for p in lst])
+
 def get_pkg_list(query, collection):
-        return sorted([format_pkg(p) for p in getattr(query, collection)()])
+        return pkg_list(getattr(query, collection)())
 
 def handle_list(dnfo, what):
         " :type dnfo: dnf.Base "
@@ -331,11 +338,17 @@ def main():
 
         dnfo.resolve()
 
-        if state == 'latest' and pkg == '*':
-                names['Upgraded'] = sorted([format_pkg(p) for p in dnfo.transaction.install_set])
+        if state == 'latest' and (pkg == '*' or pkg.startswith('@')):
+                names['Upgraded'] = pkg_list(dnfo.transaction.install_set)
+        elif state in ['present', 'installed'] and pkg.startswith('@'):
+                names['Installed'] = pkg_list(dnfo.transaction.install_set)
+        elif state in ['absent', 'removed'] and pkg.startswith('@'):
+                names['Removed'] = pkg_list(dnfo.transaction.remove_set)
 
         dnfo.download_packages(dnfo.transaction.install_set)
         dnfo.do_transaction()
+
+        dnfo.close()
 
         ansible_result(module, 0, True, names)
 
