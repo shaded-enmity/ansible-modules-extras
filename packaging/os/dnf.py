@@ -18,11 +18,8 @@
 # along with Ansible.  If not, see <http://www.gnu.org/licenses/>.
 #
 
-
-import traceback
 import os
 import dnf
-import syslog
 
 DOCUMENTATION = '''
 ---
@@ -143,29 +140,39 @@ def init_dnf(module, repos = ([], []), conf = '', gpg = True):
         return obj
 
 def ansible_result(module, rc, changed, results):
-    o = {
-        'rc' :      rc,
-        'changed':  changed,
-        'results':  results
-    }
-    module.exit_json(**o)
+        o = {
+                'rc' :      rc,
+                'changed':  changed,
+                'results':  results
+        }
+        module.exit_json(**o)
 
 def get_names(name):
         if ',' not in name:
                 return [name]
         return name.split(',')
 
+def get_group(dnfo, name):
+        grp = dnfo.comps.group_by_pattern(name[1:])
+        if not grp:
+                raise dnf.exceptions.Error('Group {0} not found'.format(name))
+
+        return grp
+
 def query(c, name):
         i = c.filter(provides=name)
         if not i:
-                return 'No package {0} installed'.format(name)
-        return format_pkg(i[0])
+                raise dnf.exceptions.Error('Package {0} not found'.format(name))
+
+        return format_pkg(i[-1])
 
 def install(dnfo, name):
         " :type dnfo: dnf.Base "
         if name.startswith('@'):
-                grp = dnfo.comps.group_by_pattern(name[1:])
-                dnfo.group_install(grp, 'default')
+                try:
+                        dnfo.group_install(get_group(name), 'default')
+                except dnf.exceptions.CompsError:
+                        pass
                 return { 'Installed': name}
 
         q = dnfo.sack.query()
@@ -182,8 +189,10 @@ def install(dnfo, name):
 def remove(dnfo, name):
         " :type dnfo: dnf.Base "
         if name.startswith('@'):
-                grp = dnfo.comps.group_by_pattern(name[1:])
-                dnfo.group_remove(grp)
+                try:
+                        dnfo.group_remove(get_group(name))
+                except dnf.exceptions.CompsError:
+                        pass
                 return { 'Removed': name }
 
         q = dnfo.sack.query()
@@ -207,8 +216,10 @@ def upgrade(dnfo, name):
                 return { 'Upgraded': 'all' }
 
         if name.startswith('@'):
-                grp = dnfo.comps.group_by_pattern(name[1:])
-                dnfo.group_upgrade(grp)
+                try:
+                        dnfo.group_upgrade(get_group(name))
+                except dnf.exceptions.CompsError:
+                        pass
                 return { 'Upgraded': name }
 
         q = dnfo.sack.query()
@@ -221,10 +232,10 @@ def upgrade(dnfo, name):
                 i = i.filter(provides=n)
                 a = a.filter(provides=n)
                 if not i and a:
-                        installed.append(format_pkg(a[0]))
+                        installed.append(format_pkg(a[-1]))
                         dnfo.install(n)
                 elif i and a: 
-                        upgraded.append(format_pkg(a[0]))
+                        upgraded.append(format_pkg(a[-1]))
                         dnfo.upgrade(n)
                 elif not i and not a:
                         raise dnf.exceptions.Error('Package {0} not found'.format(n))
@@ -288,69 +299,66 @@ def parse_repolist(repos):
         return repos.split(',')
 
 def main():
-    # state=installed name=pkgspec
-    # state=removed name=pkgspec
-    # state=latest name=pkgspec
-    #
-    # informational commands:
-    #   list=installed
-    #   list=updates
-    #   list=available
-    #   list=repos
-    #   list=pkgspec
-    module = AnsibleModule(
-        argument_spec = dict(
-            name=dict(aliases=['pkg']),
-            state=dict(default='installed', choices=['absent','present','installed','removed','latest']),
-            enablerepo=dict(),
-            disablerepo=dict(),
-            list=dict(),
-            conf_file=dict(default=None),
-            disable_gpg_check=dict(required=False, default="no", type='bool'),
-        ),
-        required_one_of = [['name','list']],
-        mutually_exclusive = [['name','list']],
-        supports_check_mode = True
-    )
+        # state=installed name=pkgspec
+        # state=removed name=pkgspec
+        # state=latest name=pkgspec
+        #
+        # informational commands:
+        #   list=installed
+        #   list=updates
+        #   list=available
+        #   list=repos
+        #   list=pkgspec
+        module = AnsibleModule(
+                argument_spec = dict(
+                        name=dict(aliases=['pkg']),
+                        state=dict(default='installed', choices=['absent','present','installed','removed','latest']),
+                        enablerepo=dict(),
+                        disablerepo=dict(),
+                        list=dict(),
+                        conf_file=dict(default=None),
+                        disable_gpg_check=dict(required=False, default="no", type='bool'),
+                ),
+                required_one_of = [['name','list']],
+                mutually_exclusive = [['name','list']],
+                supports_check_mode = True
+        )
 
-    params = module.params
+        params = module.params
 
-    enablerepo = params.get('enablerepo', '')
-    disablerepo = params.get('disablerepo', '')
+        enablerepo = params.get('enablerepo', '')
+        disablerepo = params.get('disablerepo', '')
 
-    enabled = parse_repolist(enablerepo)
-    disabled = parse_repolist(disablerepo)
+        enabled = parse_repolist(enablerepo)
+        disabled = parse_repolist(disablerepo)
 
-    dnfo = init_dnf(
-        module = module,
-        repos  = (enabled, disabled), 
-        conf   = params['conf_file'], 
-        gpg    = not params['disable_gpg_check']
-    )
+        with init_dnf(
+                module = module,
+                repos  = (enabled, disabled), 
+                conf   = params['conf_file'], 
+                gpg    = not params['disable_gpg_check']
+        ) as dnfo:
+                if params['list']:
+                        ansible_result(module, 0, True, handle_list(dnfo, params['list']))
+                else:
+                        pkg = params['name']
+                        state = params['state']
 
-    if params['list']:
-        ansible_result(module, 0, True, handle_list(dnfo, params['list']))
-    else:
-        pkg = params['name']
-        state = params['state']
+                        names = handle_state(dnfo, state, pkg)
 
-        names = handle_state(dnfo, state, pkg)
+                        dnfo.resolve(True)
 
-        dnfo.resolve()
+                        if state == 'latest' and (pkg == '*' or pkg.startswith('@')):
+                        names['Upgraded'] = pkg_list(dnfo.transaction.install_set)
+                        elif state in ['present', 'installed'] and pkg.startswith('@'):
+                        names['Installed'] = pkg_list(dnfo.transaction.install_set)
+                        elif state in ['absent', 'removed'] and pkg.startswith('@'):
+                        names['Removed'] = pkg_list(dnfo.transaction.remove_set)
 
-        if state == 'latest' and (pkg == '*' or pkg.startswith('@')):
-                names['Upgraded'] = pkg_list(dnfo.transaction.install_set)
-        elif state in ['present', 'installed'] and pkg.startswith('@'):
-                names['Installed'] = pkg_list(dnfo.transaction.install_set)
-        elif state in ['absent', 'removed'] and pkg.startswith('@'):
-                names['Removed'] = pkg_list(dnfo.transaction.remove_set)
+                        dnfo.download_packages(dnfo.transaction.install_set)
+                        dnfo.do_transaction()
 
-        dnfo.download_packages(dnfo.transaction.install_set)
-        dnfo.do_transaction()
-
-        dnfo.close()
-
-        ansible_result(module, 0, True, names)
+                        ansible_result(module, 0, True, names)
 
 from ansible.module_utils.basic import *
 if __name__ == '__main__':
