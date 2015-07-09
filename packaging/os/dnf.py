@@ -349,11 +349,11 @@ def main():
                         dnfo.resolve(True)
 
                         if state == 'latest' and (pkg == '*' or pkg.startswith('@')):
-                        names['Upgraded'] = pkg_list(dnfo.transaction.install_set)
+                                names['Upgraded'] = pkg_list(dnfo.transaction.install_set)
                         elif state in ['present', 'installed'] and pkg.startswith('@'):
-                        names['Installed'] = pkg_list(dnfo.transaction.install_set)
+                                names['Installed'] = pkg_list(dnfo.transaction.install_set)
                         elif state in ['absent', 'removed'] and pkg.startswith('@'):
-                        names['Removed'] = pkg_list(dnfo.transaction.remove_set)
+                                names['Removed'] = pkg_list(dnfo.transaction.remove_set)
 
                         dnfo.download_packages(dnfo.transaction.install_set)
                         dnfo.do_transaction()
