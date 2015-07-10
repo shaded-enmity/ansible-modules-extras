@@ -1,6 +1,8 @@
 #!/usr/bin/python -tt
 # vim: set fileencoding=utf-8
-# Written by Pavel Odvody <podvody@redhat.com>
+#
+# Copyright 2015 Pavel Odvody <podvody@redhat.com>
+# Copyright 2015 Cristian van Ee <cristian at cvee.org>
 #
 # This file is part of Ansible
 #
@@ -84,7 +86,9 @@ notes: []
 # informational: requirements for nodes
 requirements:
   - dnf
-author: "Pavel Odvody"
+author: 
+  - '"Pavel Odvody" <podvody@redhat.com>'
+  - '"Cristian van Ee (@DJMuggs)" <cristian at cvee.org>'
 '''
 
 EXAMPLES = '''
@@ -299,16 +303,6 @@ def parse_repolist(repos):
         return repos.split(',')
 
 def main():
-        # state=installed name=pkgspec
-        # state=removed name=pkgspec
-        # state=latest name=pkgspec
-        #
-        # informational commands:
-        #   list=installed
-        #   list=updates
-        #   list=available
-        #   list=repos
-        #   list=pkgspec
         module = AnsibleModule(
                 argument_spec = dict(
                         name=dict(aliases=['pkg']),
