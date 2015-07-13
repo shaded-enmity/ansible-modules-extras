@@ -1,5 +1,5 @@
 #!/usr/bin/python -tt
-# vim: set fileencoding=utf-8
+# -*- coding: utf-8 -*-
 #
 # Copyright 2015 Pavel Odvody <podvody@redhat.com>
 # Copyright 2015 Cristian van Ee <cristian at cvee.org>
@@ -21,7 +21,11 @@
 #
 
 import os
-import dnf
+NO_DNF = False
+try:
+        import dnf
+except ImportError:
+        NO_DNF = True
 
 DOCUMENTATION = '''
 ---
@@ -116,11 +120,22 @@ EXAMPLES = '''
 '''
 
 def init_dnf(module, repos=([], []), conf='', gpg=True):
+        '''Initialize the `dnf.Base` object with the supplied configuration
+
+        :param module: 
+        :type module: AnsibleModule
+        :param repos: Tuple of `Enabled`/`Disabled` repositories
+        :type repos: (list, list)
+        :param conf: Path to configuration file
+        :type conf: str
+        :param gpg: Pass `False` to disable `GPG` checking
+        :return: Initialized :class:`dnf.Base` object
+        '''
         obj = dnf.Base()
         if conf:
                 if not os.path.exists(conf):
-                        err = { msg: 'Invalid configuration path',
-                                path: conf }
+                        err = {'msg': 'Invalid configuration path',
+                               'path': conf }
                         module.fail_json(**err)
                 obj.conf.read(conf)
 
@@ -129,6 +144,7 @@ def init_dnf(module, repos=([], []), conf='', gpg=True):
 
         obj.conf.assumeyes = True
 
+        obj.read_all_repos()
         if repos[1]:
                 for r in repos[1]:
                         obj.repos.get_matching(r).disable()
@@ -137,13 +153,24 @@ def init_dnf(module, repos=([], []), conf='', gpg=True):
                 for r in repos[0]:
                         obj.repos.get_matching(r).enable()
 
-        obj.read_all_repos()
         obj.fill_sack()
         obj.read_comps()
 
         return obj
 
 def ansible_result(module, rc, changed, results):
+        '''Helper function that exits `ansible` module
+
+        :param module: Module to exit
+        :type module: AnsibleModule
+        :param rc: Return code
+        :type rc: int
+        :param changed: Did a change occur?
+        :type changed: bool
+        :param results: Result dictionary
+        :type results: dict
+        :return: Nothing
+        '''
         o = {
                 'rc' :      rc,
                 'changed':  changed,
@@ -151,12 +178,16 @@ def ansible_result(module, rc, changed, results):
         }
         module.exit_json(**o)
 
-def get_names(name):
-        if ',' not in name:
-                return [name]
-        return name.split(',')
-
 def get_group(dnfo, name):
+        '''Finds package group with the given `name`
+
+        :param dnfo: DNF object
+        :type dnfo: dnf.Base
+        :param name: Name
+        :type name: str
+        :return: Group with the supplied name
+        :rtype: dnfo.comps.Group
+        '''
         grp = dnfo.comps.group_by_pattern(name[1:])
         if not grp:
                 raise dnf.exceptions.Error('Group {0} not found'.format(name))
@@ -164,14 +195,33 @@ def get_group(dnfo, name):
         return grp
 
 def query(c, name):
+        '''Query information about package with the name `name` in
+        the collection `c`.
+
+        :param c: Package collection
+        :type c: dnf.hawkey.Query
+        :param name: Name 
+        :type name: str
+        :return: Package as a dictionary
+        :rtype: dict
+        '''
         i = c.filter(provides=name)
         if not i:
                 raise dnf.exceptions.Error('Package {0} not found'.format(name))
 
         return format_pkg(i[-1])
 
-def install(dnfo, name):
-        " :type dnfo: dnf.Base "
+def install(dnfo, names):
+        '''Installs a package group or a list of packages
+
+        :param dnfo: DNF object
+        :type dnfo: dnf.Base 
+        :param names: Packages to install
+        :type names: list[str]
+        :return: Group name or list of packages
+        :rtype: str or list[dict]
+        '''
+        name = names[0]
         if name.startswith('@'):
                 try:
                         dnfo.group_install(get_group(name), 'default')
@@ -183,15 +233,23 @@ def install(dnfo, name):
         i = q.available()
 
         installed = []
-        names = get_names(name)
         for n in names:
                 dnfo.install(n)
                 installed.append(query(i, n))
 
         return { 'Installed': installed }
 
-def remove(dnfo, name):
-        " :type dnfo: dnf.Base "
+def remove(dnfo, names):
+        '''Removes a package group or a list of packages
+
+        :param dnfo: DNF object
+        :type dnfo: dnf.Base 
+        :param names: Packages to remove
+        :type names: list[str]
+        :return: Group name or list of packages
+        :rtype: str or list[dict]
+        '''
+        name = names[0]
         if name.startswith('@'):
                 try:
                         dnfo.group_remove(get_group(name))
@@ -203,7 +261,6 @@ def remove(dnfo, name):
         i = q.installed()
 
         removed = []
-        names = get_names(name)
         for n in names:
                 try:
                         dnfo.remove(n)
@@ -213,8 +270,17 @@ def remove(dnfo, name):
 
         return { 'Removed': removed }
 
-def upgrade(dnfo, name):
-        " :type dnfo: dnf.Base "
+def upgrade(dnfo, names):
+        '''Upgrades a package group or a list of packages, or all `*`
+
+        :param dnfo: DNF object
+        :type dnfo: dnf.Base 
+        :param names: Packages to upgrade, or `*`
+        :type names: list[str]
+        :return: Group name or list of packages
+        :rtype: str or list[dict]
+        '''
+        name = names[0]
         if name == '*':
                 dnfo.upgrade_all()
                 return { 'Upgraded': 'all' }
@@ -231,7 +297,6 @@ def upgrade(dnfo, name):
         i = q.installed()
 
         installed, upgraded = [], []
-        names = get_names(name)
         for n in names:
                 i = i.filter(provides=n)
                 a = a.filter(provides=n)
@@ -250,6 +315,17 @@ def upgrade(dnfo, name):
         }
 
 def handle_state(dnfo, state, name):
+        '''Packages specified in `name` should converge to particular `state`
+
+        :param dnfo: DNF object
+        :type dnfo: dnf.Base 
+        :param state: State to converge to
+        :type state: str
+        :param name: Package names
+        :type name: list[str]
+        :return: Dictionary of installed/removed/upgraded packages 
+        :rtype: dict or `None` if state was invalid
+        '''
         " :type dnfo: dnf.Base "
         if state in ['present', 'installed']:
                 return install(dnfo, name)
@@ -261,6 +337,13 @@ def handle_state(dnfo, state, name):
         return None
 
 def format_pkg(p):
+        '''Format a package `p` as a dictionary
+
+        :param p: Package to format
+        :type p: dnf.hawkey.Package
+        :return: Formatted package
+        :rtype: dict
+        '''
         return {
                 'name': p.name,
                 'arch': p.arch,
@@ -273,12 +356,39 @@ def format_pkg(p):
         }
 
 def pkg_list(lst):
+        '''Outputs a sorted list of package dictionaries
+
+        :param lst: List of packages
+        :type lst: list[dnf.hawkey.Package]
+        :return: Sorted list of formatted packages
+        :rtype: list[dict]
+        '''
         return sorted([format_pkg(p) for p in lst])
 
 def get_pkg_list(query, collection):
+        '''Queries the `query` object about the packages
+        in specified `collection`. Formats the output as a list of
+        package dictionaries
+
+        :param query: Query object
+        :type query: dnf.hawkey.Query
+        :param collection: Collection name
+        :type collection: str
+        :return: List of packages in the specified `collection`
+        :rtype: list[dict]
+        '''
         return pkg_list(getattr(query, collection)())
 
 def handle_list(dnfo, what):
+        '''Provides entrypoint for `repo`/`package` listing functionality
+
+        :param dnfo: DNF object
+        :type dnfo: dnf.Base 
+        :param what: What collection to list
+        :type what: str
+        :return: List of package dictionaries
+        :rtype: list[dict]
+        '''
         " :type dnfo: dnf.Base "
         if what == 'repos':
                 return [k for (k, _) in dnfo.repos.iteritems()]
@@ -293,22 +403,13 @@ def handle_list(dnfo, what):
 
                 return []
 
-def parse_repolist(repos):
-        if not repos:
-                return []
-
-        if repos == '*' or ',' not in repos:
-                return [repos]
-
-        return repos.split(',')
-
 def main():
         module = AnsibleModule(
                 argument_spec = dict(
-                        name=dict(aliases=['pkg']),
+                        name=dict(aliases=['pkg'], type='list'),
                         state=dict(default='installed', choices=['absent','present','installed','removed','latest']),
-                        enablerepo=dict(),
-                        disablerepo=dict(),
+                        enablerepo=dict(type='list'),
+                        disablerepo=dict(type='list'),
                         list=dict(),
                         conf_file=dict(default=None),
                         disable_gpg_check=dict(required=False, default="no", type='bool'),
@@ -318,13 +419,14 @@ def main():
                 supports_check_mode = True
         )
 
+        if NO_DNF:
+                err = {'msg': 'DNF was not found on this system'}
+                module.fail_json(**err)
+
         params = module.params
 
-        enablerepo = params.get('enablerepo', '')
-        disablerepo = params.get('disablerepo', '')
-
-        enabled = parse_repolist(enablerepo)
-        disabled = parse_repolist(disablerepo)
+        enabled = params.get('enablerepo')
+        disabled = params.get('disablerepo')
 
         with init_dnf(
                 module = module,
@@ -338,15 +440,20 @@ def main():
                         pkg = params['name']
                         state = params['state']
 
+                        if not pkg:
+                                err = {'err': 'No package specified'}
+                                module.fail_json(**err)
+
+                        pkg_name = pkg[0]
                         names = handle_state(dnfo, state, pkg)
 
                         dnfo.resolve(True)
 
-                        if state == 'latest' and (pkg == '*' or pkg.startswith('@')):
+                        if state == 'latest' and (pkg == '*' or pkg_name.startswith('@')):
                                 names['Upgraded'] = pkg_list(dnfo.transaction.install_set)
-                        elif state in ['present', 'installed'] and pkg.startswith('@'):
+                        elif state in ['present', 'installed'] and pkg_name.startswith('@'):
                                 names['Installed'] = pkg_list(dnfo.transaction.install_set)
-                        elif state in ['absent', 'removed'] and pkg.startswith('@'):
+                        elif state in ['absent', 'removed'] and pkg_name.startswith('@'):
                                 names['Removed'] = pkg_list(dnfo.transaction.remove_set)
 
                         dnfo.download_packages(dnfo.transaction.install_set)
