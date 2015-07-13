@@ -90,6 +90,7 @@ notes: []
 # informational: requirements for nodes
 requirements:
   - dnf
+  - "python >= 2.6"
 author: 
   - '"Pavel Odvody" <podvody@redhat.com>'
   - '"Cristian van Ee (@DJMuggs)" <cristian at cvee.org>'
